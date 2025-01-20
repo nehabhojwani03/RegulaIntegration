@@ -1,0 +1,10 @@
+# Ignore macOS system files
+.DS_Store
+
+# Ignore Node.js modules
+node_modules/
+
+# Ignore build folders
+android/app/build/
+ios/Pods/
+
