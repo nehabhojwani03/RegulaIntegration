@@ -1,14 +1,16 @@
 import React from 'react'
-import { SafeAreaView, ScrollView, StyleSheet, Text, View, NativeEventEmitter, Platform, TouchableOpacity, Image, Button, Alert } from 'react-native'
+import { SafeAreaView, ScrollView, StyleSheet, Text, View, NativeEventEmitter, Platform, TouchableOpacity, Image, Button, Alert, Linking } from 'react-native'
 import DocumentReader, { Enum as DocEnum, DocumentReaderCompletion, DocumentReaderResults, DocumentReaderNotification, ScannerConfig, RecognizeConfig, DocReaderConfig, Functionality, RNRegulaDocumentReader } from '@regulaforensics/react-native-document-reader-api'
 import FaceSDK, { Enum as FaceEnum, FaceCaptureResponse, LivenessResponse, MatchFacesResponse, MatchFacesRequest, MatchFacesImage, ComparedFacesSplit, InitConfig as FaceInitConfig, InitResponse, LivenessSkipStep, RNFaceApi, LivenessNotification } from '@regulaforensics/react-native-face-api'
 import * as RNFS from 'react-native-fs'
 import { launchImageLibrary } from 'react-native-image-picker'
-import * as Progress from 'react-native-progress'
+import RNFetchBlob from 'react-native-blob-util';
+
 
 var image1 = new MatchFacesImage()
 var image2 = new MatchFacesImage()
 var isReadingRfid = false
+const ACCESS_TOKEN = 'ya29.a0ARW5m74k0KOQw2qGyJrocKVQWa0bnuzj8Bdk3Tm1rub_keNakeQu9W5F36kp_bDPUT3-ebbdH_PUYj9_KDsXyutML-uO_fdw0OATdzsqoCV3JEsDrZtVJJW2x47kGj0dsS3vLmyBOMOnXEfOMHxOJOdiKG0_AVSHqkJKu6xKaCgYKARwSARESFQHGX2MivkMPPxzEVar_lo06EDSGDQ0175';
 
 interface IState {
     // Document SDK states
@@ -87,46 +89,47 @@ export default class RegulaScreen extends React.Component<{}, IState> {
             currentStep: 'document',
             showResults: false,
         }
+        this.initializeReaders();
 
-        this.initializeReaders()
     }
+
 
     initializeReaders() {
         // Document Reader initialization
         var docEventManager = new NativeEventEmitter(RNRegulaDocumentReader)
         docEventManager.addListener('completion', (e) => this.handleCompletion(DocumentReaderCompletion.fromJson(JSON.parse(e["msg"]))!))
         docEventManager.addListener('rfidOnProgressCompletion', e => this.updateRfidUI(DocumentReaderNotification.fromJson(JSON.parse(e["msg"]))!))
-    
+
         // Face SDK initialization
         var faceEventManager = new NativeEventEmitter(RNFaceApi)
         faceEventManager.addListener('livenessNotificationEvent', data => {
             var notification = LivenessNotification.fromJson(JSON.parse(data))!
             console.log("LivenessStatus: " + notification.status)
         })
-    
+
         // Initialize both SDKs
         var licPath = Platform.OS === 'ios' ? (RNFS.MainBundlePath + "/regula.license") : "regula.license"
         var readFile = Platform.OS === 'ios' ? RNFS.readFile : RNFS.readFileAssets
-    
+
         const initializeFaceSDK = async (license: string) => {
             return new Promise((resolve, reject) => {
                 // Try to initialize with null first to check status
                 FaceSDK.initialize(null, async (firstResponse) => {
                     console.log("Initial Face SDK check response:", firstResponse)
                     const firstInitResponse = InitResponse.fromJson(JSON.parse(firstResponse))
-    
+
                     if (firstInitResponse?.error?.code === 4) {  // Core is unavailable
                         // Try full initialization with license
                         var faceConfig = new FaceInitConfig()
                         faceConfig.license = license
-    
+
                         // Add a small delay before second attempt
                         await new Promise(resolve => setTimeout(resolve, 1000))
-    
+
                         FaceSDK.initialize(faceConfig, (secondResponse) => {
                             console.log("Face SDK full initialization response:", secondResponse)
                             const secondInitResponse = InitResponse.fromJson(JSON.parse(secondResponse))
-                            
+
                             if (secondInitResponse?.success || secondInitResponse?.error?.message === "Core already running.") {
                                 console.log("Face SDK initialized successfully")
                                 resolve(true)
@@ -143,19 +146,19 @@ export default class RegulaScreen extends React.Component<{}, IState> {
                 }, reject)
             })
         }
-    
+
         const initializeDocReader = (license: string) => {
             return new Promise((resolve, reject) => {
                 var docConfig = new DocReaderConfig()
                 docConfig.license = license
                 docConfig.delayedNNLoad = true
-    
+
                 DocumentReader.initializeReader(docConfig, (response) => {
                     console.log("Document Reader initialized successfully")
                     var functionality = new Functionality()
                     functionality.showCaptureButton = true
                     DocumentReader.setFunctionality(functionality, _ => { }, _ => { })
-    
+
                     DocumentReader.getIsRFIDAvailableForUse((canRfid) => {
                         if (canRfid) {
                             this.setState({
@@ -171,7 +174,7 @@ export default class RegulaScreen extends React.Component<{}, IState> {
                 }, reject)
             })
         }
-    
+
         // Main initialization flow
         readFile(licPath, 'base64')
             .then(async (license) => {
@@ -243,76 +246,82 @@ export default class RegulaScreen extends React.Component<{}, IState> {
     }
 
     displayResults(results: DocumentReaderResults) {
-        if (results == null) return
+        if (results == null) return;
+
+        // Document number
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_DOCUMENT_NUMBER, (value: string | undefined) => {
-            this.setState({ documentNumber: value })
-        }, (error: string) => console.log(error))
+            this.setState({ documentNumber: value });
+        }, (error: string) => console.log(error));
 
-        //Name
+        // Name
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_SURNAME_AND_GIVEN_NAMES, (value: string | undefined) => {
-            this.setState({ fullName: value })
-        }, (error: string) => console.log(error))
+            this.setState({ fullName: value });
+        }, (error: string) => console.log(error));
 
-        //Date of birth
+        // Date of birth
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_DATE_OF_BIRTH, (value: string | undefined) => {
-            this.setState({ dateOfBirth: value })
-        }, (error: string) => console.log(error))
+            this.setState({ dateOfBirth: value });
+        }, (error: string) => console.log(error));
 
-        //date of issue
+        // Date of issue
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_DATE_OF_ISSUE, (value: string | undefined) => {
-            this.setState({ dateOfIssue: value })
-        }, (error: string) => console.log(error))
+            this.setState({ dateOfIssue: value });
+        }, (error: string) => console.log(error));
 
-        //issuing state code
+        // Issuing state code
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_ISSUING_STATE_CODE, (value: string | undefined) => {
-            this.setState({ issuingStateCode: value })
-        }, (error: string) => console.log(error))
+            this.setState({ issuingStateCode: value });
+        }, (error: string) => console.log(error));
 
-        //issuing state
+        // Issuing state
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_ISSUING_STATE_NAME, (value: string | undefined) => {
-            this.setState({ issuingState: value })
-        }, (error: string) => console.log(error))
+            this.setState({ issuingState: value });
+        }, (error: string) => console.log(error));
 
-        //address state
+        // Address state
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_ADDRESS_STATE, (value: string | undefined) => {
-            this.setState({ addressState: value })
-        }, (error: string) => console.log(error))
+            this.setState({ addressState: value });
+        }, (error: string) => console.log(error));
 
-        //age
+        // Age
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_AGE, (value: string | undefined) => {
-            this.setState({ age: value })
-        }, (error: string) => console.log(error))
+            this.setState({ age: value });
+        }, (error: string) => console.log(error));
 
-        //other person name
+        // Other person name
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_OTHERPERSON_NAME, (value: string | undefined) => {
-            this.setState({ otherPersonName: value })
-        }, (error: string) => console.log(error))
+            this.setState({ otherPersonName: value });
+        }, (error: string) => console.log(error));
 
-        //year since issue
+        // Year since issue
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_YEARS_SINCE_ISSUE, (value: string | undefined) => {
-            this.setState({ yearSinceIssue: value })
-        }, (error: string) => console.log(error))
+            this.setState({ yearSinceIssue: value });
+        }, (error: string) => console.log(error));
 
-        //Age at issue
+        // Age at issue
         results.textFieldValueByType(DocEnum.eVisualFieldType.FT_AGE_AT_ISSUE, (value: string | undefined) => {
-            this.setState({ ageAtIssue: value })
-        }, (error: string) => console.log(error))
+            this.setState({ ageAtIssue: value });
+        }, (error: string) => console.log(error));
 
+
+        // Document image
         results.graphicFieldImageByType(DocEnum.eGraphicFieldType.GF_DOCUMENT_IMAGE, (value: string | undefined) => {
-            if (value != null && value != "")
-                this.setState({ docFront: { uri: "data:image/png;base64," + value } })
-        }, (error: string) => console.log(error))
+            if (value) {
+                this.setState({ docFront: { uri: "data:image/png;base64," + value } });
+            }
+        }, (error: string) => console.log(error));
 
+        // Portrait image
         results.graphicFieldImageByType(DocEnum.eGraphicFieldType.GF_PORTRAIT, (value: string | undefined) => {
             if (value) {
-                this.setState({ portrait: { uri: "data:image/png;base64," + value } })
+                this.setState({ portrait: { uri: "data:image/png;base64," + value } });
                 // Set document portrait for face matching
-                image1 = new MatchFacesImage()
-                image1.image = value
-                image1.imageType = FaceEnum.ImageType.PRINTED
-                this.setState({ img1: { uri: "data:image/png;base64," + value } })
+                image1 = new MatchFacesImage();
+                image1.image = value;
+                image1.imageType = FaceEnum.ImageType.PRINTED;
+                this.setState({ img1: { uri: "data:image/png;base64," + value } });
             }
-        }, (error: string) => console.log(error))
+        }, (error: string) => console.log(error));
     }
 
 
@@ -323,6 +332,7 @@ export default class RegulaScreen extends React.Component<{}, IState> {
                 image2 = new MatchFacesImage()
                 image2.image = response.image
                 image2.imageType = FaceEnum.ImageType.LIVE
+
                 this.setState({
                     img2: { uri: "data:image/png;base64," + response.image },
                     liveness: response.liveness == FaceEnum.LivenessStatus.PASSED ? "passed" : "failed"
@@ -347,10 +357,14 @@ export default class RegulaScreen extends React.Component<{}, IState> {
             var response = MatchFacesResponse.fromJson(JSON.parse(json))
             FaceSDK.splitComparedFaces(response!.results!, 0.75, str => {
                 var split = ComparedFacesSplit.fromJson(JSON.parse(str))!
+                const similarityResult = split.matchedFaces!.length > 0
+                    ? ((split.matchedFaces![0].similarity! * 100).toFixed(2) + "%")
+                    : "error";
+
                 this.setState({
-                    similarity: split.matchedFaces!.length > 0 ? ((split.matchedFaces![0].similarity! * 100).toFixed(2) + "%") : "error",
+                    similarity: similarityResult,
                     currentStep: 'complete',
-                    showResults: true 
+                    showResults: true
                 })
             }, e => { this.setState({ similarity: e }) })
         }, e => { this.setState({ similarity: e }) })
@@ -392,13 +406,105 @@ export default class RegulaScreen extends React.Component<{}, IState> {
         if (notification.progress != null)
             this.setState({ rfidProgress: notification.progress / 100 })
     }
+    
+    
+    uploadResultsToDrive = async () => {
+        if (!this.state.showResults) {
+            Alert.alert('Error', 'No results to upload');
+            return;
+        }
+    
+        const FOLDER_ID = '1mTEeT2AxYT6anNXqPmLCKTlg2kkVaU4t'; // Replace with your Google Drive folder ID
+    
+        const resultsData = {
+            documentNumber: this.state.documentNumber,
+            fullName: this.state.fullName,
+            dateOfBirth: this.state.dateOfBirth,
+            dateOfIssue: this.state.dateOfIssue,
+            issuingStateCode: this.state.issuingStateCode,
+            issuingState: this.state.issuingState,
+            addressState: this.state.addressState,
+            age: this.state.age,
+            otherPersonName: this.state.otherPersonName,
+            yearSinceIssue: this.state.yearSinceIssue,
+            ageAtIssue: this.state.ageAtIssue,
+            liveness: this.state.liveness,
+            similarity: this.state.similarity,
+            timestamp: new Date().toISOString(),
+        };
+    
+        try {
+            const jsonData = JSON.stringify(resultsData, null, 2);
+            const personName = this.state.fullName || 'Unknown_Person';
+            const fileName = `${personName}_${new Date().toISOString().replace(/:/g, '-')}.json`;
+    
+            console.log('Generated JSON Data:', jsonData); // Log the JSON data
+            console.log('Generated File Name:', fileName); // Log the file name
+            console.log('Folder ID:', FOLDER_ID); // Log the folder ID
+    
+            const metadata = {
+                name: fileName,
+                mimeType: 'application/json',
+                parents: [FOLDER_ID], // Ensure this is correct
+            };
+            console.log('Metadata:', JSON.stringify(metadata));
+    
+            const formData = [
+                {
+                    name: 'metadata',
+                    data: JSON.stringify(metadata),
+                    type: 'application/json',
+                },
+                {
+                    name: 'file',
+                    filename: fileName,
+                    data: RNFetchBlob.base64.encode(jsonData), // Encode JSON data to Base64
+                    type: 'application/json',
+                },
+            ];
+    
+            console.log('Form Data Prepared:', formData); // Log the prepared formData
+    
+            const response = await RNFetchBlob.fetch(
+                'POST',
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                {
+                    Authorization: `Bearer ${ACCESS_TOKEN}`,
+                    'Content-Type': 'multipart/form-data',
+                },
+                formData
+            );
+    
+            console.log('Full Response:', response); // Log the full response from Google Drive
+    
+            const responseData = response.json();
+            console.log('Response Data:', responseData); // Log the parsed response data
+    
+            if (responseData && responseData.id) {
+                Alert.alert(
+                    'Upload Successful',
+                    `File uploaded successfully`,
+                    [{ text: 'OK' }]
+                );
+            } else {
+                throw new Error('File upload failed');
+            }
+        } catch (error) {
+            console.error('Upload error:', error); // Log the error
+            Alert.alert('Upload Failed', 'Could not upload results to Google Drive', [
+                { text: 'OK' },
+            ]);
+        }
+    };
+    
 
+    
     render() {
         return (
             <SafeAreaView style={styles.container}>
                 <ScrollView>
                     {/* Document Results Display */}
-                     {this.state.showResults && (
+                    {this.state.showResults && (
                         <View style={styles.imagesContainer}>
                             <View style={styles.imageRow}>
                                 <View style={styles.imageWrapper}>
@@ -450,6 +556,13 @@ export default class RegulaScreen extends React.Component<{}, IState> {
                                     title="Start New Verification"
                                     onPress={() => this.clearResults()}
                                 />
+
+                                {this.state.showResults && (
+                                    <Button
+                                        title="Upload Results to Drive"
+                                        onPress={this.uploadResultsToDrive}
+                                    />
+                                )}
                                 {this.state.canRfid && (
                                     <Button
                                         title={`Read RFID ${this.state.canRfidTitle}`}
@@ -523,5 +636,25 @@ const styles = StyleSheet.create({
     resultText: {
         fontSize: 16,
         marginBottom: 8
-    }
+    },
+    uploadedFilesContainer: {
+        marginTop: 20,
+        padding: 10,
+        backgroundColor: '#f8f8f8',
+        borderRadius: 8,
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 10,
+    },
+    fileItem: {
+        padding: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    fileName: {
+        fontSize: 14,
+        color: '#007AFF',
+    },
 })
